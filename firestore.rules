@@ -1,0 +1,106 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helpers
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(data) {
+      return isSignedIn() && data.createdBy == request.auth.uid;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == 'poli.almoxarifado@gmail.com' ||
+        (exists(/databases/$(database)/documents/profiles/$(request.auth.uid)) && get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role == 'admin')
+      );
+    }
+
+    function isValidEvaluation(data) {
+      return data.keys().hasAll(['formId', 'sector', 'rating', 'observation', 'date', 'createdBy', 'createdByName', 'createdAt'])
+        && data.keys().size() == 8
+        && data.formId is string && data.formId.size() > 0
+        && data.sector is string && data.sector.size() > 0
+        && data.rating in ['Ótimo', 'Bom', 'Regular', 'Ruim', 'Não informou']
+        && (data.observation is string && data.observation.size() <= 2000)
+        && data.date is timestamp
+        && data.createdBy == request.auth.uid
+        && data.createdAt == request.time;
+    }
+
+    function isValidForm(data) {
+      return data.keys().hasAll(['date', 'observation', 'createdBy', 'createdByName', 'createdAt', 'recommendationScore'])
+        && data.keys().size() == 6
+        && data.date is timestamp
+        && (data.observation is string && data.observation.size() <= 2000)
+        && data.recommendationScore is number && data.recommendationScore >= 0 && data.recommendationScore <= 10
+        && data.createdBy == request.auth.uid
+        && data.createdAt == request.time;
+    }
+
+    function isValidSector(data) {
+      return data.keys().hasAll(['name', 'active', 'createdAt'])
+        && data.keys().size() == 3
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 100
+        && data.active is bool;
+    }
+
+    function isValidSectorCreate(data) {
+      return isValidSector(data) && data.createdAt == request.time;
+    }
+
+    function isValidSectorUpdate(incoming, existing) {
+      return isValidSector(incoming) && incoming.createdAt == existing.createdAt;
+    }
+
+    function isValidProfile(data) {
+      return data.keys().hasAll(['email', 'role', 'active', 'name'])
+        && data.keys().size() == 4
+        && data.email is string
+        && data.role in ['admin', 'operator']
+        && data.active is bool
+        && data.name is string;
+    }
+
+    match /profiles/{userId} {
+      allow get: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isAdmin() || (isSignedIn() && request.auth.uid == userId);
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    match /forms/{formId} {
+      allow list: if isSignedIn();
+      allow get: if isSignedIn();
+      allow create: if isSignedIn() && isValidForm(request.resource.data);
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+
+    match /evaluations/{evaluationId} {
+      allow list: if isSignedIn();
+      allow get: if isSignedIn();
+      allow create: if isSignedIn() && isValidEvaluation(request.resource.data);
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+
+    match /sectors/{sectorId} {
+      allow read: if isSignedIn();
+      allow create: if isAdmin() && isValidSectorCreate(request.resource.data);
+      allow update: if isAdmin() && isValidSectorUpdate(request.resource.data, resource.data);
+      allow delete: if isAdmin();
+    }
+  }
+}

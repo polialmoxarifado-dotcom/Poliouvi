@@ -1,0 +1,138 @@
+{
+  "entities": {
+    "Evaluation": {
+      "title": "Avaliação",
+      "description": "Uma avaliação de um setor específico, parte de um formulário de pesquisa.",
+      "type": "object",
+      "properties": {
+        "formId": {
+          "type": "string",
+          "description": "ID do formulário pai."
+        },
+        "sector": {
+          "type": "string",
+          "description": "O nome do setor avaliado."
+        },
+        "rating": {
+          "type": "string",
+          "description": "A classificação da avaliação.",
+          "enum": [
+            "Ótimo",
+            "Bom",
+            "Regular",
+            "Ruim",
+            "Não informou"
+          ]
+        },
+        "observation": {
+          "type": "string",
+          "description": "Observação opcional para este item."
+        },
+        "date": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "createdBy": {
+          "type": "string"
+        },
+        "createdByName": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["formId", "sector", "rating", "date", "createdBy", "createdAt"]
+    },
+    "SurveyForm": {
+      "title": "Formulário de Pesquisa",
+      "description": "O registro principal de um formulário físico preenchido por um paciente.",
+      "type": "object",
+      "properties": {
+        "date": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "recommendationScore": {
+          "type": "number",
+          "description": "O quanto indicaria a policlínica (0 a 10)."
+        },
+        "observation": {
+          "type": "string",
+          "description": "Observação geral do formulário."
+        },
+        "createdBy": {
+          "type": "string"
+        },
+        "createdByName": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["date", "createdBy", "createdAt"]
+    },
+    "Sector": {
+      "title": "Setor",
+      "description": "Um setor da policlínica que pode ser avaliado.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Nome do setor."
+        },
+        "active": {
+          "type": "boolean",
+          "description": "Se o setor está ativo para novas avaliações."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["name", "active", "createdAt"]
+    },
+    "Profile": {
+      "title": "Perfil de Usuário",
+      "description": "Metadados do usuário no sistema.",
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string",
+          "enum": ["admin", "operator"]
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": ["email", "role", "active"]
+    }
+  },
+  "firestore": {
+    "forms": {
+      "schema": "SurveyForm",
+      "description": "Coleção de formulários de pesquisa."
+    },
+    "evaluations": {
+      "schema": "Evaluation",
+      "description": "Coleção contendo todos os registros de avaliações."
+    },
+    "sectors": {
+      "schema": "Sector",
+      "description": "Coleção de setores cadastrados."
+    },
+    "profiles": {
+      "schema": "Profile",
+      "description": "Coleção de perfis de usuários."
+    }
+  }
+}
