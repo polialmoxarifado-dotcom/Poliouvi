@@ -11,13 +11,19 @@ interface EvaluationFormProps {
 }
 
 export function EvaluationForm({ onFinish }: EvaluationFormProps) {
-  const [sectors, setSectors] = useState<string[]>([]);
+  const [sectors, setSectors] = useState<string[]>(() => [...FIXED_SECTORS]);
   const [formDate, setFormDate] = useState(new Date().toISOString().split('T')[0]);
   const [formObservation, setFormObservation] = useState('');
   const [recommendationScore, setRecommendationScore] = useState<number | null>(null);
   
   // State for all ratings: { [sectorName]: { rating, observation } }
-  const [evaluations, setEvaluations] = useState<Record<string, { rating: Rating | '', observation: string }>>({});
+  const [evaluations, setEvaluations] = useState<Record<string, { rating: Rating | '', observation: string }>>(() => {
+    const initial: Record<string, { rating: Rating | '', observation: string }> = {};
+    FIXED_SECTORS.forEach(s => {
+      initial[s] = { rating: '', observation: '' };
+    });
+    return initial;
+  });
 
   useEffect(() => {
     const q = query(

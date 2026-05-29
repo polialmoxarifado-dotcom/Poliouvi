@@ -16,16 +16,26 @@ import { EvaluationList } from './components/EvaluationList';
 import { SectorManagement } from './components/SectorManagement';
 import { UserManagement } from './components/UserManagement';
 import { Login } from './components/Login';
+import { PatientSurvey } from './components/PatientSurvey';
 import { Loader2, ShieldAlert, LogOut } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 type View = 'dashboard' | 'reports' | 'form' | 'list' | 'sectors' | 'users';
 
 export default function App() {
+  const [isPatientMode] = useState(() => {
+    return new URLSearchParams(window.location.search).get('mode') === 'paciente' ||
+           window.location.hash.includes('mode=paciente');
+  });
+
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [currentView, setCurrentView] = useState<View>('dashboard');
+
+  if (isPatientMode) {
+    return <PatientSurvey />;
+  }
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (u) => {

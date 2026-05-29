@@ -177,6 +177,25 @@ export function Login() {
                 </svg>
                 Google
               </button>
+
+              <div className="relative my-6">
+                <div className="absolute inset-0 flex items-center">
+                  <div className="w-full border-t border-slate-100"></div>
+                </div>
+                <div className="relative flex justify-center text-[9px] font-black uppercase tracking-widest">
+                  <span className="bg-white px-4 text-slate-350">Paciente da Policlínica</span>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  window.location.search = "mode=paciente";
+                }}
+                className="w-full flex items-center justify-center gap-3 bg-blue-50 hover:bg-blue-100/70 text-blue-750 font-extrabold py-3.5 rounded-xl transition-all active:scale-95 border border-dashed border-blue-200 cursor-pointer"
+              >
+                Responder Pesquisa de Satisfação
+              </button>
             </motion.div>
           )}
         </AnimatePresence>
