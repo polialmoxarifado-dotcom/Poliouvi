@@ -1,7 +1,7 @@
 import { useState, useEffect, FormEvent } from 'react';
-import { collection, query, orderBy, onSnapshot, addDoc, updateDoc, deleteDoc, doc, serverTimestamp, Timestamp } from 'firebase/firestore';
-import { db, handleFirestoreError, OperationType } from '../lib/firebase';
-import { Plus, Trash2, Check, X, Pencil, Save } from 'lucide-react';
+import { collection, query, orderBy, onSnapshot, addDoc, updateDoc, deleteDoc, doc, serverTimestamp, Timestamp, getDocs, writeBatch } from 'firebase/firestore';
+import { db, handleFirestoreError, OperationType, auth, getProfile, UserProfile } from '../lib/firebase';
+import { Plus, Trash2, Check, X, Pencil, Save, ShieldAlert, Loader2 } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 interface SectorRecord {
@@ -17,8 +17,93 @@ export function SectorManagement() {
   const [newName, setNewName] = useState('');
   const [isAdding, setIsAdding] = useState(false);
   
-  const [editingId, setEditingId] = useState<string | null>(null);
+   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
+
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [confirmText, setConfirmText] = useState('');
+  const [isDeletingAll, setIsDeletingAll] = useState(false);
+
+  // Sandboxed-safe confirmation modals & notifications
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showSeedModal, setShowSeedModal] = useState(false);
+  const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
+
+  useEffect(() => {
+    if (notification) {
+      const timer = setTimeout(() => setNotification(null), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [notification]);
+
+  useEffect(() => {
+    if (auth.currentUser) {
+      getProfile(auth.currentUser.uid).then(setProfile);
+    }
+  }, []);
+
+  const handleDeleteAllHistory = () => {
+    if (confirmText !== 'APAGAR') {
+      setNotification({ message: "Por favor, digite 'APAGAR' exatamente no campo para habilitar a exclusão.", type: 'error' });
+      return;
+    }
+    setShowDeleteModal(true);
+  };
+
+  const executeDeleteAllHistory = async () => {
+    setShowDeleteModal(false);
+    setIsDeletingAll(true);
+
+    try {
+      const formsSnapshot = await getDocs(collection(db, 'forms'));
+      const evalsSnapshot = await getDocs(collection(db, 'evaluations'));
+
+      if (formsSnapshot.empty && evalsSnapshot.empty) {
+        setNotification({ message: "O banco de dados já está limpo!", type: 'info' });
+        setIsDeletingAll(false);
+        setConfirmText('');
+        return;
+      }
+
+      let count = 0;
+      let batch = writeBatch(db);
+
+      for (const fDoc of formsSnapshot.docs) {
+        batch.delete(doc(db, 'forms', fDoc.id));
+        count++;
+        if (count >= 400) {
+          await batch.commit();
+          batch = writeBatch(db);
+          count = 0;
+        }
+      }
+
+      for (const eDoc of evalsSnapshot.docs) {
+        batch.delete(doc(db, 'evaluations', eDoc.id));
+        count++;
+        if (count >= 400) {
+          await batch.commit();
+          batch = writeBatch(db);
+          count = 0;
+        }
+      }
+
+      if (count > 0) {
+        await batch.commit();
+      }
+
+      setNotification({ message: "Todo o histórico de pesquisas foi zerado com sucesso!", type: 'success' });
+      setConfirmText('');
+    } catch (error: any) {
+      console.error("Error clearing database info:", error);
+      setNotification({ 
+        message: `Erro ao realizar exclusão: ${error.message || error.code || 'Verifique suas credenciais de administrador.'}`, 
+        type: 'error' 
+      });
+    } finally {
+      setIsDeletingAll(false);
+    }
+  };
 
   useEffect(() => {
     const q = query(collection(db, 'sectors'), orderBy('name', 'asc'));
@@ -83,9 +168,12 @@ export function SectorManagement() {
     }
   };
 
-  const handleSeedDefaultSectors = async () => {
-    if (!window.confirm('Deseja carregar os setores padrão da Policlínica?')) return;
-    
+  const handleSeedDefaultSectors = () => {
+    setShowSeedModal(true);
+  };
+
+  const executeSeedDefaultSectors = async () => {
+    setShowSeedModal(false);
     const defaultSectors = [
       "Portaria/Segurança", "Recepção Geral", "Triagem", "Consultas Médicas",
       "Consultas Multiprofissionais", "Realização de Exames", "Laboratório",
@@ -102,8 +190,9 @@ export function SectorManagement() {
           });
         }
       }
+      setNotification({ message: "Setores padrão carregados com sucesso!", type: 'success' });
     } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, 'sectors');
+      setNotification({ message: "Erro ao cadastrar setores padrão.", type: 'error' });
     }
   };
 
@@ -115,11 +204,14 @@ export function SectorManagement() {
     try {
       await deleteDoc(doc(db, 'sectors', id));
       console.log("Deletion successful:", id);
+      setNotification({ message: "Setor excluído com sucesso!", type: 'success' });
     } catch (error: any) {
       console.error("Deletion Error:", error);
-      alert(`Erro ao excluir: ${error.message || error.code || 'Erro desconhecido'}`);
+      setNotification({ message: `Erro ao excluir setor: ${error.message || error.code || 'Erro desconhecido'}`, type: 'error' });
     }
   };
+
+  const isAdminUser = profile?.role === 'admin' || auth.currentUser?.email === 'poli.almoxarifado@gmail.com';
 
   return (
     <div className="max-w-4xl mx-auto space-y-8">
@@ -290,6 +382,141 @@ export function SectorManagement() {
           Setores desativados não aparecerão no formulário de Nova Avaliação para evitar novos lançamentos, mas os registros antigos desses setores continuarão visíveis no histórico e dashboard.
         </p>
       </div>
+
+      {/* Database Maintenance Section */}
+      {isAdminUser && (
+        <div className="bg-white rounded-[2rem] p-8 border border-rose-100 shadow-sm space-y-6">
+          <div className="flex gap-4 items-start">
+            <div className="w-12 h-12 bg-rose-50 text-rose-600 rounded-2xl flex items-center justify-center shrink-0">
+              <ShieldAlert className="w-6 h-6" />
+            </div>
+            <div>
+              <h3 className="text-lg font-black text-rose-950 tracking-tight">Perigo: Limpeza do Banco de Dados</h3>
+              <p className="text-slate-500 text-sm mt-1 leading-relaxed">
+                Esta ação apagará <strong>permanentemente</strong> toda a memória de pesquisas, formulários e classificações por setores. Ideal para começar a usar a ferramenta oficialmente após a conclusão da etapa de testes.
+              </p>
+            </div>
+          </div>
+
+          <div className="pt-4 border-t border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-6">
+            <div className="space-y-1.5 flex-1 max-w-sm">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block pl-1">Digite APAGAR para liberar</label>
+              <input 
+                type="text" 
+                value={confirmText}
+                onChange={(e) => setConfirmText(e.target.value)}
+                placeholder="Escreva APAGAR aqui" 
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-black text-rose-700 tracking-wider focus:ring-2 focus:ring-rose-500 outline-none animate-none"
+              />
+            </div>
+
+            <button
+              onClick={handleDeleteAllHistory}
+              disabled={confirmText !== 'APAGAR' || isDeletingAll}
+              className="flex items-center justify-center gap-2 px-8 py-3.5 bg-rose-600 hover:bg-rose-700 disabled:bg-slate-100 disabled:text-slate-450 text-white rounded-2xl font-black text-sm transition-all shadow-lg hover:shadow-rose-100 active:scale-95 cursor-pointer disabled:opacity-50 disabled:pointer-events-none"
+            >
+              {isDeletingAll ? (
+                <>
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  Limpando registros...
+                </>
+              ) : (
+                <>
+                  <Trash2 className="w-4 h-4" />
+                  Zerar Histórico de Pesquisas
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Safety Notifications & Interactive Modals (no window.confirm blocked by iframes) */}
+      {notification && (
+        <div className={cn(
+          "fixed top-4 right-4 z-50 p-4 rounded-2xl shadow-xl border flex items-center gap-3 animate-in fade-in slide-in-from-top-4 duration-300 max-w-sm",
+          notification.type === 'success' ? "bg-emerald-50 border-emerald-100 text-emerald-800" :
+          notification.type === 'error' ? "bg-rose-50 border-rose-100 text-rose-800" :
+          "bg-slate-50 border-slate-100 text-slate-800"
+        )}>
+          <div className="text-xs font-extrabold flex-1 leading-snug">{notification.message}</div>
+          <button onClick={() => setNotification(null)} className="text-slate-400 hover:text-slate-600 font-bold p-1">✕</button>
+        </div>
+      )}
+
+      {showSeedModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-[2rem] max-w-sm w-full p-8 border border-slate-100 shadow-2xl space-y-6 relative animate-in zoom-in-95 duration-200">
+            <button 
+              onClick={() => setShowSeedModal(false)}
+              className="absolute right-6 top-6 text-slate-400 hover:text-slate-600 font-bold p-1 rounded-full hover:bg-slate-50 transition-colors"
+            >
+              ✕
+            </button>
+            <div className="text-center space-y-2">
+              <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-2">
+                <Plus className="w-6 h-6" />
+              </div>
+              <h3 className="text-lg font-black text-slate-900 tracking-tight">Popular Setores Padrão?</h3>
+              <p className="text-xs text-slate-500 max-w-xs mx-auto text-center leading-relaxed">
+                Isso criará automaticamente os setores padrão da Policlínica (Segurança, Recepção, Triagem, Consultas, Banheiros, etc.).
+              </p>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowSeedModal(false)}
+                className="flex-1 py-3 text-xs font-black text-slate-500 hover:bg-slate-55 rounded-xl border border-slate-200 cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={executeSeedDefaultSectors}
+                className="flex-1 py-3 text-xs font-black text-white bg-blue-600 hover:bg-blue-700 rounded-xl cursor-pointer shadow-md shadow-blue-100"
+              >
+                Confirmar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showDeleteModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-[2rem] max-w-sm w-full p-8 border border-rose-100 shadow-2xl space-y-6 relative animate-in zoom-in-95 duration-200">
+            <button 
+              onClick={() => setShowDeleteModal(false)}
+              className="absolute right-6 top-6 text-slate-400 hover:text-slate-600 font-bold p-1 rounded-full hover:bg-slate-50 transition-colors"
+            >
+              ✕
+            </button>
+            <div className="text-center space-y-2">
+              <div className="w-12 h-12 bg-rose-50 text-rose-650 rounded-2xl flex items-center justify-center mx-auto mb-2">
+                <ShieldAlert className="w-6 h-6" />
+              </div>
+              <h3 className="text-lg font-black text-rose-950 tracking-tight text-center">CONFIRMAR DELEÇÃO</h3>
+              <p className="text-xs text-slate-500 max-w-xs mx-auto text-center leading-relaxed">
+                Você tem certeza absoluta que deseja excluir <strong>permanentemente</strong> todo o histórico de pesquisas, formulários e as avaliações por setor no banco de dados? Esta ação é definitiva e irreversível!
+              </p>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowDeleteModal(false)}
+                className="flex-1 py-3 text-xs font-black text-slate-550 hover:bg-slate-50 rounded-xl border border-slate-200 cursor-pointer"
+              >
+                Cancelar Exclusão
+              </button>
+              <button
+                onClick={executeDeleteAllHistory}
+                className="flex-1 py-3 text-xs font-black text-white bg-rose-600 hover:bg-rose-700 rounded-xl cursor-pointer shadow-md shadow-rose-100"
+              >
+                Sim, Deletar Tudo
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

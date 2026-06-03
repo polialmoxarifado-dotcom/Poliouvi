@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, FormEvent } from 'react';
 import { collection, query, onSnapshot, orderBy, limit, Timestamp } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { Rating, RATINGS, FIXED_SECTORS } from '../constants';
@@ -17,7 +17,7 @@ import { format, subMonths, eachMonthOfInterval } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import jsPDF from 'jspdf';
 import { toJpeg } from 'html-to-image';
-import { generateReportAnalysis, AIAnalysis, ReportData } from '../services/aiService';
+import { generateReportAnalysis, AIAnalysis, ReportData, refineReportAnalysis, ChatMessage } from '../services/aiService';
 
 const RATING_HEX: Record<Rating, string> = {
   "Ótimo": "#10b981",
@@ -60,6 +60,11 @@ export function Reports() {
   const [isGeneratingAi, setIsGeneratingAi] = useState(false);
   const [isEditingAi, setIsEditingAi] = useState(false);
   const [editedAnalysis, setEditedAnalysis] = useState<AIAnalysis | null>(null);
+
+  // Assistant IA chat refinement states
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [userChatInput, setUserChatInput] = useState('');
+  const [isSendingChat, setIsSendingChat] = useState(false);
 
   const reportsRef = useRef<HTMLDivElement>(null);
 
@@ -291,6 +296,7 @@ export function Reports() {
 
   const handleGenerateAI = async () => {
     setIsGeneratingAi(true);
+    setChatMessages([]);
     try {
       const dataForAI: ReportData = {
         monthName: format(new Date(selectedYear, selectedMonth), 'MMMM', { locale: ptBR }),
@@ -315,10 +321,70 @@ export function Reports() {
       const result = await generateReportAnalysis(dataForAI);
       setAiAnalysis(result);
       setEditedAnalysis(result);
+      setChatMessages([
+        { 
+          role: 'model', 
+          text: `Olá Ouvidor! Gerei a análise inteligente inicial com base nos dados reais deste mês. Como podemos aprimorar este relatório? Você pode me dar orientações para adaptarmos os textos ao Procedimento Operacional Padrão (POP) da Policlínica!` 
+        }
+      ]);
     } catch (error) {
       alert("Erro ao gerar análise. Verifique sua conexão e tente novamente.");
     } finally {
       setIsGeneratingAi(false);
+    }
+  };
+
+  const handleSendChatMessage = async (e?: FormEvent, customPrompt?: string) => {
+    if (e) e.preventDefault();
+    const promptToSend = customPrompt || userChatInput;
+    if (!promptToSend.trim() || isSendingChat || !aiAnalysis) return;
+
+    const userMsg = promptToSend.trim();
+    if (!customPrompt) {
+      setUserChatInput('');
+    }
+
+    const newUserMsgRecord: ChatMessage = { role: 'user', text: userMsg };
+    const updatedHistory = [...chatMessages, newUserMsgRecord];
+    setChatMessages(updatedHistory);
+    setIsSendingChat(true);
+
+    try {
+      const dataForAI: ReportData = {
+        monthName: format(new Date(selectedYear, selectedMonth), 'MMMM', { locale: ptBR }),
+        year: selectedYear,
+        totalEvaluations,
+        npsScore: totalScores > 0 ? npsScore : 0,
+        npsStatus: npsInfo.label,
+        technicalQuality: `${positivePcnt}%`,
+        sectorStats: detailedSectorStats.map(s => ({
+          sector: s.sector,
+          total: s.total,
+          otimo: s['Ótimo'],
+          bom: s['Bom'],
+          regular: s['Regular'],
+          ruim: s['Ruim'],
+          naoInformou: s['Não informou'],
+          approval: s['Ótimo'] + s['Bom']
+        })),
+        comments: filteredData.filter(d => d.comment && d.comment.trim() !== '').map(d => d.comment)
+      };
+
+      const result = await refineReportAnalysis(
+        dataForAI,
+        editedAnalysis || aiAnalysis, // use the edited/current state
+        chatMessages,
+        userMsg
+      );
+
+      setAiAnalysis(result.updatedAnalysis);
+      setEditedAnalysis(result.updatedAnalysis);
+      setChatMessages(prev => [...prev, { role: 'model', text: result.assistantReply }]);
+    } catch (error) {
+      console.error("Erro ao refinar análise de relatório:", error);
+      alert("Erro ao receber resposta do assistente. Tente novamente.");
+    } finally {
+      setIsSendingChat(false);
     }
   };
 
@@ -590,6 +656,103 @@ export function Reports() {
                     "{aiAnalysis?.conclusion}"
                  </p>
                )}
+            </div>
+
+            {/* Campo de Conversa Colaborativo (Ouvidor <-> IA) */}
+            <div className="border-t border-slate-200/60 pt-10 mt-10 space-y-6 no-print">
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center shadow-sm">
+                  <Bot className="w-6 h-6 animate-pulse" />
+                </div>
+                <div>
+                  <h3 className="text-xl font-black text-slate-900 tracking-tight">Conversar com o Assistente de IA</h3>
+                  <p className="text-xs text-slate-400 font-bold uppercase tracking-widest mt-0.5">Refine o relatório de Ouvidoria em colaboração e alinhe aos POPs</p>
+                </div>
+              </div>
+
+              <div className="bg-slate-50/50 rounded-[2.5rem] border border-slate-200 p-6 md:p-8 space-y-6">
+                {/* Janela de Mensagens */}
+                <div className="h-[280px] overflow-y-auto space-y-4 pr-2 scrollbar-thin scrollbar-thumb-slate-200 scrollbar-track-transparent">
+                  {chatMessages.length === 0 ? (
+                    <div className="h-full flex flex-col items-center justify-center text-center p-6 text-slate-400">
+                      <Bot className="w-10 h-10 mb-2 opacity-35" />
+                      <p className="text-sm font-bold">Nenhuma conversa iniciada.</p>
+                      <p className="text-xs max-w-sm mt-1">Escreva abaixo ou use as sugestões de ajuste rápido para começar a lapidar o relatório.</p>
+                    </div>
+                  ) : (
+                    chatMessages.map((msg, index) => (
+                      <div key={index} className={cn("flex gap-3 max-w-[85%] items-start", msg.role === 'user' ? "ml-auto flex-row-reverse" : "mr-auto")}>
+                        <div className={cn(
+                          "w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-black shrink-0 shadow-sm",
+                          msg.role === 'user' ? "bg-slate-900 text-white" : "bg-indigo-600 text-white"
+                        )}>
+                          {msg.role === 'user' ? 'OU' : <Bot className="w-4 h-4" />}
+                        </div>
+                        <div className={cn(
+                          "p-4 rounded-3xl text-sm font-medium leading-relaxed shadow-sm",
+                          msg.role === 'user' 
+                            ? "bg-slate-900 text-slate-100 rounded-tr-none" 
+                            : "bg-white text-slate-800 rounded-tl-none border border-slate-200"
+                        )}>
+                          {msg.text}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                  {isSendingChat && (
+                    <div className="flex gap-3 items-start max-w-[80%] mr-auto animate-pulse">
+                      <div className="w-8 h-8 rounded-full bg-indigo-600 text-white flex items-center justify-center shrink-0">
+                        <Bot className="w-4 h-4 animate-spin" />
+                      </div>
+                      <div className="bg-white text-slate-500 p-4 rounded-3xl rounded-tl-none border border-slate-200 text-xs italic font-bold">
+                        A IA está revisando e atualizando os campos do relatório...
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Sugestões Rápidas (Pills) */}
+                <div className="space-y-2">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Ajustes de Procedimento (POP) e Estilo:</p>
+                  <div className="flex flex-wrap gap-2">
+                    {[
+                      "Adicionar orientações do POP de Triagem de Fluxo",
+                      "Adicionar fluxos do POP de Segurança da Recepção",
+                      "Tornar o tom do Resumo mais executivo",
+                      "Enfatizar acolhimento humanizado do SUS nos setores"
+                    ].map((pillText) => (
+                      <button
+                        key={pillText}
+                        type="button"
+                        onClick={(e) => handleSendChatMessage(e, pillText)}
+                        disabled={isSendingChat || !aiAnalysis}
+                        className="text-xs font-bold text-indigo-600 bg-indigo-50 border border-indigo-100 hover:bg-indigo-100 px-4 py-2.5 rounded-full transition-all disabled:opacity-50 active:scale-95 text-left cursor-pointer"
+                      >
+                        + {pillText}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Input Formulário */}
+                <form onSubmit={(e) => handleSendChatMessage(e)} className="flex gap-3">
+                  <input
+                    type="text"
+                    value={userChatInput}
+                    onChange={(e) => setUserChatInput(e.target.value)}
+                    disabled={isSendingChat || !aiAnalysis}
+                    placeholder="Escreva como prefere ajustar (ex: 'Destaque que o setor de Triagem seguiu as diretrizes do POP de acolhimento')"
+                    className="flex-1 bg-white border border-slate-200 rounded-2xl py-4 px-6 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500 transition-all placeholder:text-slate-400"
+                  />
+                  <button
+                    type="submit"
+                    disabled={isSendingChat || !userChatInput.trim() || !aiAnalysis}
+                    className="bg-indigo-600 text-white px-6 rounded-2xl font-bold flex items-center justify-center hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-100 disabled:opacity-50 active:scale-95 cursor-pointer"
+                  >
+                    <Send className="w-5 h-5 shrink-0" />
+                  </button>
+                </form>
+              </div>
             </div>
             
             <div className="flex justify-end pt-4 no-print">
